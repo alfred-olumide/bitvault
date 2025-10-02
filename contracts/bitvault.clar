@@ -159,3 +159,156 @@
     (asserts! (> (len revised-information) u0) err-invalid-descriptor)
     (asserts! (< (len revised-information) u129) err-invalid-descriptor)
     (asserts! (validate-tag-collection revised-tags) err-invalid-tags)
+
+    ;; Update asset registration
+    (map-set asset-catalog
+      { asset-sequence: asset-sequence }
+      (merge catalog-entry { 
+        asset-descriptor: revised-descriptor, 
+        asset-volume: revised-volume, 
+        asset-descriptor-extended: revised-information, 
+        classification-tags: revised-tags 
+      })
+    )
+    (ok true)
+  )
+)
+
+;; Cancel asset registration completely
+(define-public (cancel-asset-registration (asset-sequence uint))
+  (let
+    (
+      (catalog-entry (unwrap! (map-get? asset-catalog { asset-sequence: asset-sequence }) err-not-found))
+    )
+    ;; Verify asset exists and requestor is the custodian
+    (asserts! (asset-is-registered asset-sequence) err-not-found)
+    (asserts! (is-eq (get asset-custodian catalog-entry) tx-sender) err-permission-denied)
+
+    ;; Remove asset registration
+    (map-delete asset-catalog { asset-sequence: asset-sequence })
+    (ok true)
+  )
+)
+
+;; Transfer asset custody to new principal
+(define-public (transfer-asset-custody (asset-sequence uint) (new-custodian principal))
+  (let
+    (
+      (catalog-entry (unwrap! (map-get? asset-catalog { asset-sequence: asset-sequence }) err-not-found))
+    )
+    ;; Verify asset exists and requestor is current custodian
+    (asserts! (asset-is-registered asset-sequence) err-not-found)
+    (asserts! (is-eq (get asset-custodian catalog-entry) tx-sender) err-permission-denied)
+
+    ;; Update custodial ownership
+    (map-set asset-catalog
+      { asset-sequence: asset-sequence }
+      (merge catalog-entry { asset-custodian: new-custodian })
+    )
+    (ok true)
+  )
+)
+
+;; AUTHORIZATION MANAGEMENT
+
+;; Grant access authorization to third party
+(define-public (authorize-third-party-access (asset-sequence uint) (authorized-party principal))
+  (let
+    (
+      (catalog-entry (unwrap! (map-get? asset-catalog { asset-sequence: asset-sequence }) err-not-found))
+    )
+    ;; Verify asset exists and requestor is the custodian
+    (asserts! (asset-is-registered asset-sequence) err-not-found)
+    (asserts! (is-eq (get asset-custodian catalog-entry) tx-sender) err-permission-denied)
+
+    ;; Grant access authorization
+    (map-set authorization-matrix
+      { asset-sequence: asset-sequence, authorized-party: authorized-party }
+      { access-status: true }
+    )
+    (ok true)
+  )
+)
+
+;; Revoke third-party access authorization
+(define-public (revoke-third-party-access (asset-sequence uint) (third-party principal))
+  (let
+    (
+      (catalog-entry (unwrap! (map-get? asset-catalog { asset-sequence: asset-sequence }) err-not-found))
+    )
+    ;; Verify asset exists and requestor is the custodian
+    (asserts! (asset-is-registered asset-sequence) err-not-found)
+    (asserts! (is-eq (get asset-custodian catalog-entry) tx-sender) err-permission-denied)
+    (asserts! (not (is-eq third-party tx-sender)) err-invalid-operation)
+
+    ;; Remove authorization entry
+    (map-delete authorization-matrix { asset-sequence: asset-sequence, authorized-party: third-party })
+    (ok true)
+  )
+)
+
+;; METADATA MANAGEMENT
+
+;; Append additional classification tags to existing asset
+(define-public (extend-classification-tags (asset-sequence uint) (additional-tags (list 10 (string-ascii 32))))
+  (let
+    (
+      (catalog-entry (unwrap! (map-get? asset-catalog { asset-sequence: asset-sequence }) err-not-found))
+      (existing-tags (get classification-tags catalog-entry))
+      (combined-tags (unwrap! (as-max-len? (concat existing-tags additional-tags) u10) err-invalid-tags))
+    )
+    ;; Verify asset exists and requestor is the custodian
+    (asserts! (asset-is-registered asset-sequence) err-not-found)
+    (asserts! (is-eq (get asset-custodian catalog-entry) tx-sender) err-permission-denied)
+    (asserts! (validate-tag-collection additional-tags) err-invalid-tags)
+
+    ;; Update asset with combined tag set
+    (map-set asset-catalog
+      { asset-sequence: asset-sequence }
+      (merge catalog-entry { classification-tags: combined-tags })
+    )
+    (ok combined-tags)
+  )
+)
+
+;; Update asset volume measurement
+(define-public (update-asset-volume (asset-sequence uint) (new-volume uint))
+  (let
+    (
+      (catalog-entry (unwrap! (map-get? asset-catalog { asset-sequence: asset-sequence }) err-not-found))
+    )
+    ;; Verify asset exists and requestor is the custodian
+    (asserts! (asset-is-registered asset-sequence) err-not-found)
+    (asserts! (is-eq (get asset-custodian catalog-entry) tx-sender) err-permission-denied)
+    (asserts! (> new-volume u0) err-invalid-volume)
+    (asserts! (< new-volume u1000000000) err-invalid-volume)
+
+    ;; Update asset volume
+    (map-set asset-catalog
+      { asset-sequence: asset-sequence }
+      (merge catalog-entry { asset-volume: new-volume })
+    )
+    (ok true)
+  )
+)
+
+;; ADMINISTRATIVE FUNCTIONS
+
+;; Apply emergency restriction to prevent modifications
+(define-public (apply-emergency-restriction (asset-sequence uint))
+  (let
+    (
+      (catalog-entry (unwrap! (map-get? asset-catalog { asset-sequence: asset-sequence }) err-not-found))
+    )
+    ;; Verify asset exists and requestor has authority
+    (asserts! (asset-is-registered asset-sequence) err-not-found)
+    (asserts! 
+      (or 
+        (is-eq tx-sender admin-authority)
+        (is-eq (get asset-custodian catalog-entry) tx-sender)
+      ) 
+      err-unauthorized
+    )
+    (ok true)
+  )
+)
