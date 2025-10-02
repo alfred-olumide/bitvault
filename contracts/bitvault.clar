@@ -312,3 +312,102 @@
     (ok true)
   )
 )
+
+;; VERIFICATION & QUERY FUNCTIONS
+
+;; Validate asset custody chain and integrity
+(define-public (validate-asset-integrity (asset-sequence uint) (expected-custodian principal))
+  (let
+    (
+      (catalog-entry (unwrap! (map-get? asset-catalog { asset-sequence: asset-sequence }) err-not-found))
+      (current-custodian (get asset-custodian catalog-entry))
+      (registration-height (get registration-block catalog-entry))
+      (access-permitted (default-to 
+        false 
+        (get access-status 
+          (map-get? authorization-matrix { asset-sequence: asset-sequence, authorized-party: tx-sender })
+        )
+      ))
+    )
+    ;; Verify asset exists and requestor has appropriate authorization
+    (asserts! (asset-is-registered asset-sequence) err-not-found)
+    (asserts! 
+      (or 
+        (is-eq tx-sender current-custodian)
+        access-permitted
+        (is-eq tx-sender admin-authority)
+      ) 
+      err-permission-denied
+    )
+
+    ;; Return validation results
+    (if (is-eq current-custodian expected-custodian)
+      (ok {
+        validation-passed: true,
+        verification-block: stacks-block-height,
+        blocks-elapsed: (- stacks-block-height registration-height),
+        custodian-verified: true
+      })
+      (ok {
+        validation-passed: false,
+        verification-block: stacks-block-height,
+        blocks-elapsed: (- stacks-block-height registration-height),
+        custodian-verified: false
+      })
+    )
+  )
+)
+
+;; Retrieve asset classification profile
+(define-public (get-asset-classification (asset-sequence uint))
+  (let
+    (
+      (catalog-entry (unwrap! (map-get? asset-catalog { asset-sequence: asset-sequence }) err-not-found))
+      (current-custodian (get asset-custodian catalog-entry))
+      (access-permitted (default-to 
+        false 
+        (get access-status 
+          (map-get? authorization-matrix { asset-sequence: asset-sequence, authorized-party: tx-sender })
+        )
+      ))
+    )
+    ;; Verify asset exists and requestor has authorization
+    (asserts! (asset-is-registered asset-sequence) err-not-found)
+    (asserts! 
+      (or 
+        (is-eq tx-sender current-custodian)
+        access-permitted
+        (is-eq tx-sender admin-authority)
+      ) 
+      err-permission-denied
+    )
+
+    ;; Return classification tags
+    (ok (get classification-tags catalog-entry))
+  )
+)
+
+;; Check authorization status for a principal
+(define-public (check-authorization-status (asset-sequence uint) (evaluating-party principal))
+  (let
+    (
+      (catalog-entry (unwrap! (map-get? asset-catalog { asset-sequence: asset-sequence }) err-not-found))
+      (current-custodian (get asset-custodian catalog-entry))
+      (access-permitted (default-to 
+        false 
+        (get access-status 
+          (map-get? authorization-matrix { asset-sequence: asset-sequence, authorized-party: evaluating-party })
+        )
+      ))
+    )
+    ;; Verify asset exists
+    (asserts! (asset-is-registered asset-sequence) err-not-found)
+
+    ;; Return authorization status
+    (ok {
+      is-custodian: (is-eq evaluating-party current-custodian),
+      has-authorization: access-permitted,
+      asset-id: asset-sequence
+    })
+  )
+)
